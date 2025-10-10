@@ -86,10 +86,10 @@ When `dt_meas` decreases (more frequent measurements):
 - The estimation error decreases.
 - The filter remains more stable and consistent.
 
-![dt_meas = 50](dtmeas50.png)
+![dt_meas = 50](Results/dtmeas50.png)
 *Figure 1 – Robot trajectory with measurement period dt_meas = 50 s.*
 
-![dt_meas = 100](dtmeas100.png)
+![dt_meas = 100](Results/dtmeas100.png)
 *Figure 2 – Robot trajectory with measurement period dt_meas = 100 s.*
 
 ---
@@ -101,14 +101,14 @@ When `QEst` increases:
 - The prediction uncertainty increases.
 - The filter relies more on sensor corrections.
 
-![Q*0.1](Q01.png)
+![Q*0.1](Results/Q01.png)
 *Figure 3 – Robot trajectory with Process noise *0.1 .*
 
 When `QEst` decreases:
 - The filter trusts the motion model too much.
 - It reacts less to sensor data, and convergence becomes slower.
 
-![Q*10](Q10.png)
+![Q*10](Results/Q10.png)
 *Figure 3 – Robot trajectory with Process noise *10 .*
 
 ---
@@ -119,14 +119,14 @@ When `REst` increases:
 - The filter trusts the sensors less.
 - Corrections are weaker, and errors increase.
 
-![R*10](R10.png)
+![R*10](Results/R10.png)
 *Figure 3 – Robot trajectory with Measurement noise *10 .*
 
 When `REst` decreases:
 - The filter overreacts to noisy measurements.
 - This can cause oscillations or even local divergence.
 
-![R*01](R01.png)
+![R*01](Results/R01.png)
 *Figure 3 – Robot trajectory with Measurement noise *0.1 .*
 
 ---
@@ -140,7 +140,7 @@ During the absence of measurements:
 
 Graphically, the red curve diverges temporarily and then rejoins the black one after t = 3500 s.
 
-![Meas Gap](Quest6.png)
+![Meas Gap](Results/Quest6.png)
 *Figure 3 – Robot trajectory with Measurement Gap (t = 2500 to 3500 s).*
 
 ---
@@ -150,19 +150,19 @@ Graphically, the red curve diverges temporarily and then rejoins the black one a
 With **few landmarks**:
 - Observations are rare → the estimation becomes unstable, especially in orientation.
 
-![Few landmarks](fewland.png)
+![Few landmarks](Results/fewland.png)
 *Figure 3 – Robot trajectory with 2 landmarks.*
 
 With **many landmarks**:
 - Frequent and accurate corrections → improved performance.
 - The optimal balance depends on the noise ratio and the observation frequency.
 
-![More landmarks](nland200.png)
+![More landmarks](Results/nland200.png)
 *Figure 3 – Robot trajectory with 200 landmarks.*
 
 In the following experiment, the chosen parameters provide an excellent balance between confidence in the motion model and reliance on sensor measurements, resulting in a smooth and accurate Extended Kalman Filter (EKF) performance. By setting a relatively small process noise (QTrue) and assuming a slightly smaller modeled noise (QEst = 0.5 * QTrue), the filter trusts its dynamics enough to produce stable predictions without becoming overconfident. The larger estimated measurement noise (REst = 10 * RTrue) prevents overreaction to sensor noise, keeping the estimation robust and preventing oscillations. The high landmark density (nLandmarks = 50) and frequent updates (dt_meas = 1 s) ensure continuous correction and strong state observability. As a result, the EKF trajectory (red) aligns almost perfectly with the true trajectory (black), while odometry (green) drifts due to accumulated errors. The error plots confirm that the real errors (blue) remain within the ±3σ bounds (red), demonstrating a well-calibrated and consistent filter.
 
-![Clean Trajectory](clean.png)
+![Clean Trajectory](Results/clean.png)
 *Figure 3 – Robot trajectory with the following parameters:*
 
 | Parameter            | Description                                            | Value / Effect                                                   |
@@ -186,7 +186,7 @@ When only distance measurements are available:
 
 To compensate, `QEst` should be reduced and `REst` slightly increased.
 
-![Range Only](Quest8.png)
+![Range Only](Results/Quest8.png)
 *Figure 3 – Robot trajectory with QEst*0.7 and REst*5 for range only:*
 
 ---
@@ -197,7 +197,7 @@ When only bearing measurements are available:
 - The robot’s orientation is well constrained, but the radial position is not.
 - Distance errors increase are very slight and the angle estimation is more accurate for different parameter configurations.
 
-![Angle Only](onlydirec.png)
+![Angle Only](Results/onlydirec.png)
 *Figure 3 – Robot trajectory with QEst*0.7 and REst*5 for range only:*
 
 ---
@@ -209,4 +209,5 @@ When only bearing measurements are available:
 - Proper tuning of these covariances and the number of landmarks achieves an optimal trade-off between accuracy and stability.
 
 ---
+
 
