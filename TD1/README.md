@@ -49,27 +49,27 @@ The EKF equations were implemented as follows:
 
 ### **Prediction:**
 
-\[
+$$
 \hat{\mathbf{x}}_k^- = f(\hat{\mathbf{x}}_{k-1}, \tilde{\mathbf{u}}_k)
-\]
+$$
 
-\[
+$$
 P_k^- = F_k P_{k-1} F_k^T + G_k Q_k G_k^T
-\]
+$$
 
 ### **Update:**
 
-\[
+$$
 K_k = P_k^- H_k^T (H_k P_k^- H_k^T + R_k)^{-1}
-\]
+$$
 
-\[
+$$
 \hat{\mathbf{x}}_k = \hat{\mathbf{x}}_k^- + K_k \left( \mathbf{z}_k - h(\hat{\mathbf{x}}_k^-) \right)
-\]
+$$
 
-\[
+$$
 P_k = (I - K_k H_k) P_k^-
-\]
+$$
 
 The results show that the EKF trajectory (red) quickly converges toward the true trajectory (black),  
 while the odometry-only trajectory (green) gradually drifts due to accumulated noise.
