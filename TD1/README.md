@@ -1,7 +1,7 @@
 # TD1 – Extended Kalman Filter (EKF) Localization
 
 **Author:** Nívia Araujo da Nóbrega  
-**Course:** RO12 – Navigation Robotique 
+**Course:** RO12 – Navigation pous les systèmes autonomes 
 **Date:** 2025-10-09  
 
 ---

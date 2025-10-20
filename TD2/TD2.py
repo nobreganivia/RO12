@@ -29,6 +29,7 @@ class Simulation:
         self.Map = Map
         self.RTrue = RTrue
         self.dt_meas = dt_meas
+        self.notValidCondition = False
         
     # return true control at step k
     def get_robot_control(self, k):
@@ -69,12 +70,12 @@ class Simulation:
 
         # Model
         if k*self.dt_pred % self.dt_meas == 0:
-            notValidCondition = False # False: measurement valid / True: measurement not valid
-            if notValidCondition:
+            self.notValidCondition = False # False: measurement valid / True: measurement not valid
+            if self.notValidCondition:
                 z = None
                 iFeature = None
             else:
-                iFeature = np.random.randint(0, self.Map.shape[1] - 1)
+                iFeature = np.random.randint(0, self.Map.shape[1] - 1) 
                 zNoise = np.sqrt(self.RTrue) @ np.random.randn(2)
                 zNoise = np.array([zNoise]).T
                 z = observation_model(self.xTrue, iFeature, self.Map) + zNoise
@@ -94,8 +95,12 @@ def motion_model(x, u_tilda, dt_pred, QEst):
     # x: estimated state (x, y, heading)
     # u_tilda: noised control input (Vx, Vy, angular rate)
     
-    # ...................
-    
+    uNoise = np.sqrt(QEst) @ np.random.randn(3,1)
+    #uNoise = np.array([uNoise]).T
+    u = u_tilda + uNoise
+
+    xPred = tcomp(x, u, dt_pred)
+
     return xPred
 
 
@@ -105,13 +110,24 @@ def observation_model(xVeh, iFeature, Map):
     # iFeature: observed amer index
     # Map: map of all amers
     
-    # ...................
+    m = Map[:, [iFeature]]
+    delta = m - xVeh[:2]
+
+    r = np.sqrt(delta[0,0]**2 + delta[1,0]**2)
+    
+
+    phi = np.arctan2(delta[1,0], delta[0,0]) - xVeh[2,0]
+
+    z = np.array([[r],
+                [phi]])
+
+    z[1, 0] = angle_wrap(z[1, 0])
     
     return z
 
 
 # ---- particle filter implementation ----
-
+'''
 # Particle filter resampling
 def re_sampling(px, pw):
     """
@@ -136,6 +152,99 @@ def re_sampling(px, pw):
     pw = pw / np.sum(pw)
 
     return px, pw
+'''
+def re_sampling(px, pw):
+    """
+    Residual + Stratified resampling (Li, Bolic, Djuric, 2015).
+    px: (3, N) particles
+    pw: (N,)   normalized weights (sum=1)
+
+    Returns:
+        px_resampled, pw_resampled (uniform)
+    """
+    # Ensure 1D contiguous weights
+    w = np.asarray(pw, dtype=float).ravel()
+    w /= w.sum()
+    N = px.shape[1]
+
+    # 1) Deterministic copies: floor(N * w_i)
+    Nc = np.floor(N * w).astype(int)
+    R = N - Nc.sum()             # number of residual draws
+    # Indices for deterministic part
+    idx_det = np.repeat(np.arange(N), Nc)
+
+    # 2) Residual weights (normalized)
+    w_res = (N * w - Nc)
+    if R > 0:
+        w_res /= w_res.sum()
+        # Stratified draw on the residual mass
+        # (lower variance than multinomial)
+        cdf = np.cumsum(w_res)
+        u0 = np.random.uniform(0.0, 1.0 / R)
+        u = u0 + (np.arange(R) / R)
+        idx_res = np.searchsorted(cdf, u, side='right')
+        idx = np.concatenate([idx_det, idx_res])
+    else:
+        idx = idx_det
+
+    # 3) Permute to avoid ordering bias (optional but cheap)
+    np.random.shuffle(idx)
+
+    # 4) Resample particles and reset weights uniform
+    px = px[:, idx]
+    pw = np.full(N, 1.0 / N, dtype=float)
+    return px, pw
+
+
+def run_once(theta_eff, Tf=300, dt_pred=1, dt_meas=1, nParticles_local=300):
+    
+    np.random.seed(seed)
+    nLandmarks = 5
+    Map = 120*np.random.rand(2, nLandmarks)-60
+    QTrue = np.diag([0.02, 0.02, 1*pi/180]) ** 2
+    RTrue = np.diag([0.5, 1*pi/180]) ** 2
+    QEst  = 2 * np.eye(3) @ QTrue
+    REst  = 2 * np.eye(2) @ RTrue
+    REst_inv = np.linalg.inv(REst)
+
+    xTrue = np.array([[1, -50, 0]]).T
+    xOdom = xTrue.copy()
+    xParticles = xTrue + np.diag([1, 1, 0.1]) @ np.random.randn(3, nParticles_local)
+    wp = np.ones(nParticles_local) / nParticles_local
+
+    sim = Simulation(Tf, dt_pred, xTrue, QTrue, xOdom, Map, RTrue, dt_meas)
+
+    for k in range(1, sim.nSteps):
+        sim.simulate_world(k)
+        xOdom, u_tilda = sim.get_odometry(k)
+
+        # Prediction
+        for p in range(nParticles_local):
+            xParticles[:, p:p+1] = motion_model(xParticles[:, p:p+1], u_tilda, dt_pred, QEst)
+
+        # Correction
+        z, iFeature = sim.get_observation(k)
+        if z is not None:
+            for p in range(nParticles_local):
+                zPred = observation_model(xParticles[:, p:p+1], iFeature, Map)
+                Innov = z - zPred
+                Innov[1, 0] = angle_wrap(Innov[1, 0])
+                wp[p] *= np.exp(-0.5 * (Innov.T @ REst_inv @ Innov))[0, 0]
+
+        # Normalization
+        s = np.sum(wp)
+        if s <= 1e-300 or not np.isfinite(s):
+            wp[:] = 1.0 / nParticles_local
+        else:
+            wp /= s
+
+        # Resampling avec theta_eff 
+        Neff = 1.0 / np.sum(wp**2)
+        Nth = nParticles_local * theta_eff
+        if Neff < Nth:
+            xParticles, wp = re_sampling(xParticles, wp)
+
+    return wp
 
 
 # ---- Utils functions ----
@@ -235,7 +344,7 @@ def plotParticles(simulation, k, iFeature, hxTrue, hxOdom, hxEst, hxError, hxSTD
     ax5.set_xlabel('time (s)')
 
     if save: plt.savefig(r'outputs/SRL' + str(k) + '.png')
-#        plt.pause(0.01)
+    plt.pause(0.01)
 
 
 # =============================================================================
@@ -254,7 +363,7 @@ dt_pred = 1     # Time between two dynamical predictions (s)
 dt_meas = 1     # Time between two measurement updates (s)
 
 # Location of landmarks
-nLandmarks = 5
+nLandmarks = 100
 Map = 120*np.random.rand(2, nLandmarks)-60
 
 # True covariance of errors used for simulating robot movements
@@ -262,8 +371,8 @@ QTrue = np.diag([0.02, 0.02, 1*pi/180]) ** 2
 RTrue = np.diag([0.5, 1*pi/180]) ** 2
 
 # Modeled errors used in the Particle filter process
-QEst = 2 * np.eye(3, 3) @ QTrue
-REst = 2 * np.eye(2, 2) @ RTrue
+QEst = 10 * np.eye(3, 3) @ QTrue
+REst = 0.5 * np.eye(2, 2) @ RTrue
 
 # initial conditions
 xTrue = np.array([[1, -50, 0]]).T
@@ -315,41 +424,53 @@ for k in range(1, simulation.nSteps):
     # do prediction
     # for each particle we add control vector AND noise
     
-    # ...................
+    #xParticles = motion_model(xEst, u_tilda, dt_pred, QEst)
 
+    '''
+    if 250 <= k*dt_pred <= 350:
+        simulation.notValidCondition = True
+    else:
+        simulation.notValidCondition = False
+    '''
+
+    for p in range(nParticles):
+        xParticles[:, p:p+1] = motion_model(xParticles[:, p:p+1], u_tilda, dt_pred, QEst)
     # observe a random feature
     [z, iFeature] = simulation.get_observation(k)
+
 
     if z is not None:
         for p in range(nParticles):
             # Predict observation from the particle position
-            zPred = # ...................
+            zPred = observation_model(xParticles[:, p:p+1], iFeature, Map)
 
             # Innovation : perception error
-            Innov = # ...................
-            Innov[1] = angle_wrap(Innov[1])
+            Innov = z - zPred
+            Innov[1,0] = angle_wrap(Innov[1,0])
+
+            mahal = (Innov.T @ np.linalg.inv(REst) @ Innov).item()
 
             # Compute particle weight using gaussian model
-            wp[p] = # ...................
+            wp[p] *= np.exp( -0.5 * mahal)
     # Normalization
-    wp = # ...................
+    wp = wp / np.sum(wp)
     
     
     # Compute position as weighted mean of particles
-    xEst = # ...................
+    xEst = np.average(xParticles, axis=1, weights=wp).reshape(3,1)
 
     # Compute particles std deviation
-    PEst = # ................... # Empirical covariance matrix
-    xSTD = # ................... # Column vector of standard deviations (sqrt of diagonal of PEst)
+    PEst = np.cov(xParticles, aweights=wp) # Empirical covariance matrix
+    xSTD = np.sqrt(np.diag(PEst)).reshape(3,1) # Column vector of standard deviations (sqrt of diagonal of PEst)
     
     
-    # Reampling
+    # Resampling
     theta_eff = 0.1
     Nth = nParticles * theta_eff
-    Neff = # ...................
+    Neff = 1.0 / np.sum(wp ** 2) #Effective sample size
     if Neff < Nth:
         # Particle resampling
-        xParticles, wp = # ...................
+        xParticles, wp = re_sampling(xParticles, wp)
 
 
     # store data history
@@ -366,6 +487,82 @@ for k in range(1, simulation.nSteps):
         plotParticles(simulation, k, iFeature, hxTrue, hxOdom, hxEst, hxError, hxSTD, htime, save = True)
 
 
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+'''
+# --- choose thresholds to test ---
+theta_grid = [0.00, 0.05, 0.10, 0.20, 0.30, 0.40, 0.70, 1.00]
+N = 300  # nParticles_local
+
+# --- run and collect weights ---
+raw = {th: run_once(th, Tf=300, dt_pred=1, dt_meas=1, nParticles_local=N) for th in theta_grid}
+
+# --- build signatures to detect "same result" ---
+def signature(wp, N):
+    centered = wp - (1.0/N)
+    Neff = 1.0 / np.sum(wp**2)
+    # Round to tolerances so tiny noise doesn’t create fake differences
+    return (
+        round(float(Neff), 1),                  # Neff rounded to 0.1
+        round(float(centered.std()), 6),        # variability around uniform
+        round(float(centered.min()), 6),
+        round(float(centered.max()), 6),
+    )
+
+sig_to_rep = {}         # signature -> representative theta
+groups = {}             # representative theta -> list of equivalent thetas
+rep_order = []          # preserve order of appearance
+
+for th in theta_grid:
+    wp = raw[th]
+    sig = signature(wp, N)
+    if sig not in sig_to_rep:
+        sig_to_rep[sig] = th
+        groups[th] = [th]
+        rep_order.append(th)
+    else:
+        rep = sig_to_rep[sig]
+        groups[rep].append(th)
+
+# --- plot only unique representatives ---
+n_unique = len(rep_order)
+ncols = min(4, n_unique)
+nrows = int(np.ceil(n_unique / ncols))
+plt.figure(figsize=(4*ncols, 3*nrows))
+
+for i, th in enumerate(rep_order, 1):
+    wp = raw[th]
+    centered = wp - (1.0/N)
+    Neff = 1.0 / np.sum(wp**2)
+
+    ax = plt.subplot(nrows, ncols, i)
+    ax.hist(centered, bins=20)   # counts, like your figure
+    # symmetric x-limits around 0 for comparability
+    max_abs = max(abs(centered.min()), abs(centered.max()))
+    if max_abs < 2.0/N:  # small window when nearly uniform
+        max_abs = 2.0/N
+    ax.set_xlim(-max_abs, +max_abs)
+    ax.axvline(0.0, linestyle='--', linewidth=1)
+    ax.set_xlabel("pdf")     # your caption label
+    ax.set_ylabel("counts")
+    # Title shows the representative and (if any) thetas collapsed into it
+    collapsed = [t for t in groups[th] if t != th]
+    if collapsed:
+        ax.set_title(rf"$\theta_{{eff}}={th:.2f}$ (≈ {', '.join(f'{c:.2f}' for c in collapsed)}), $N_{{eff}}={Neff:.1f}$")
+    else:
+        ax.set_title(rf"$\theta_{{eff}}={th:.2f}$, $N_{{eff}}={Neff:.1f}$")
+
+plt.tight_layout()
+plt.savefig("outputs/weights_histograms_centered_unique.png", dpi=150)
+print("Saved: outputs/weights_histograms_centered_unique.png")
+
+# --- print grouping summary ---
+print("\nGrouped thetas (duplicates collapsed):")
+for rep in rep_order:
+    print(f"  kept {rep:.2f}  <-  {', '.join(f'{t:.2f}' for t in groups[rep])}")
+'''
 
 tErrors = np.sqrt(np.square(hxError[0, :]) + np.square(hxError[1, :]))
 print("Mean (var) translation error : {:e} ({:e})".format(np.mean(tErrors), np.var(tErrors)))
